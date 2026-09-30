@@ -72,6 +72,7 @@ pipeline {
                     echo "Waiting for new container health check..."
 
                     for i in 1 2 3 4 5 6 7 8 9 10; do
+
                         STATUS=$(docker inspect --format='{{.State.Health.Status}}' ${NEW_CONTAINER} 2>/dev/null || true)
 
                         echo "Health status: $STATUS"
@@ -91,77 +92,91 @@ pipeline {
             }
         }
 
-   stage('Switch Production') {
-    steps {
-        sh '''
-            OLD_IMAGE=$(docker inspect --format='{{.Config.Image}}' ${CONTAINER_NAME})
+        stage('Switch Production') {
+            steps {
+                sh '''
+                    OLD_IMAGE=$(docker inspect --format='{{.Config.Image}}' ${CONTAINER_NAME})
 
-            echo "Current production image: $OLD_IMAGE"
-            echo "New production image: ${FULL_IMAGE}"
+                    echo "Current production image: $OLD_IMAGE"
+                    echo "New production image: ${FULL_IMAGE}"
 
-            docker stop ${CONTAINER_NAME} 2>/dev/null || true
-            docker rm ${CONTAINER_NAME} 2>/dev/null || true
+                    docker stop ${CONTAINER_NAME} 2>/dev/null || true
+                    docker rm ${CONTAINER_NAME} 2>/dev/null || true
 
-            docker run -d \
-                --name ${CONTAINER_NAME} \
-                --restart unless-stopped \
-                --memory=256m \
-                --cpus=0.5 \
-                -p 80:8080 \
-                ${FULL_IMAGE}
+                    docker run -d \
+                        --name ${CONTAINER_NAME} \
+                        --restart unless-stopped \
+                        --memory=256m \
+                        --cpus=0.5 \
+                        -p 80:8080 \
+                        ${FULL_IMAGE}
 
-            echo "Waiting for production container..."
+                    echo "Waiting for production container..."
 
-            for i in 1 2 3 4 5 6 7 8 9 10; do
+                    for i in 1 2 3 4 5 6 7 8 9 10; do
 
-                STATUS=$(docker inspect --format='{{.State.Health.Status}}' ${CONTAINER_NAME} 2>/dev/null || true)
+                        STATUS=$(docker inspect --format='{{.State.Health.Status}}' ${CONTAINER_NAME} 2>/dev/null || true)
 
-                echo "Health status: $STATUS"
+                        echo "Production health status: $STATUS"
 
-                if [ "$STATUS" = "healthy" ]; then
-                    echo "Production container is healthy."
-                    docker rm -f ${NEW_CONTAINER} 2>/dev/null || true
-                    echo "Production deployment successful."
-                    exit 0
-                fi
+                        if [ "$STATUS" = "healthy" ]; then
+                            echo "Production container is healthy."
 
-                sleep 5
-            done
+                            docker rm -f ${NEW_CONTAINER} 2>/dev/null || true
 
-            echo "Production container failed health check."
-            docker logs ${CONTAINER_NAME} || true
+                            echo "Production deployment successful."
+                            exit 0
+                        fi
 
-            echo "Rolling back to: $OLD_IMAGE"
+                        sleep 5
+                    done
 
-            docker rm -f ${CONTAINER_NAME} 2>/dev/null || true
+                    echo "Production container failed health check."
+                    docker logs ${CONTAINER_NAME} || true
 
-            docker run -d \
-                --name ${CONTAINER_NAME} \
-                --restart unless-stopped \
-                --memory=256m \
-                --cpus=0.5 \
-                -p 80:8080 \
-                ${OLD_IMAGE}
+                    echo "Rolling back to: $OLD_IMAGE"
 
-            echo "Waiting for rollback container..."
+                    docker rm -f ${CONTAINER_NAME} 2>/dev/null || true
 
-            for i in 1 2 3 4 5 6 7 8 9 10; do
+                    docker run -d \
+                        --name ${CONTAINER_NAME} \
+                        --restart unless-stopped \
+                        --memory=256m \
+                        --cpus=0.5 \
+                        -p 80:8080 \
+                        ${OLD_IMAGE}
 
-                ROLLBACK_STATUS=$(docker inspect --format='{{.State.Health.Status}}' ${CONTAINER_NAME} 2>/dev/null || true)
+                    echo "Waiting for rollback container..."
 
-                echo "Rollback health status: $ROLLBACK_STATUS"
+                    for i in 1 2 3 4 5 6 7 8 9 10; do
 
-                if [ "$ROLLBACK_STATUS" = "healthy" ]; then
-                    echo "Rollback successful."
+                        ROLLBACK_STATUS=$(docker inspect --format='{{.State.Health.Status}}' ${CONTAINER_NAME} 2>/dev/null || true)
+
+                        echo "Rollback health status: $ROLLBACK_STATUS"
+
+                        if [ "$ROLLBACK_STATUS" = "healthy" ]; then
+                            echo "Rollback successful."
+                            exit 1
+                        fi
+
+                        sleep 5
+                    done
+
+                    echo "Rollback also failed."
+                    docker logs ${CONTAINER_NAME} || true
                     exit 1
-                fi
+                '''
+            }
+        }
+    }
 
-                sleep 5
-            done
+    post {
+        success {
+            echo "Deployment successful: ${FULL_IMAGE}"
+        }
 
-            echo "Rollback also failed."
-            docker logs ${CONTAINER_NAME} || true
-            exit 1
-        '''
+        failure {
+            echo "Pipeline failed."
+        }
     }
 }
